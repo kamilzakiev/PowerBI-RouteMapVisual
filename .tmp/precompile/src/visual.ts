@@ -27,12 +27,36 @@
 module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF  {
     import DataViewObjects = powerbi.DataViewObjects;
     import DataViewValueColumn = powerbi.DataViewValueColumn;
+	
+	import Selection = d3.Selection;
+    import UpdateSelection = d3.selection.Update;
     
-    const labelSelector = ".connection-map-label";
-    const labelClassName = "connection-map-label";
+    import tooltip = powerbi.extensibility.utils.tooltip;
+    import TooltipEnabledDataPoint = powerbi.extensibility.utils.tooltip.TooltipEnabledDataPoint;
+    import TooltipEventArgs = powerbi.extensibility.utils.tooltip.TooltipEventArgs;    
+    import ITooltipServiceWrapper = powerbi.extensibility.utils.tooltip.ITooltipServiceWrapper;    
+    import createTooltipServiceWrapper = powerbi.extensibility.utils.tooltip.createTooltipServiceWrapper;
+    import IValueFormatter = powerbi.extensibility.utils.formatting.IValueFormatter;
+    import ValueFormatter = powerbi.extensibility.utils.formatting.valueFormatter;
+    
+    // powerbi.extensibility.utils.svg
+    import IMargin = powerbi.extensibility.utils.svg.IMargin;
+    import translate = powerbi.extensibility.utils.svg.translate;
+    import ClassAndSelector = powerbi.extensibility.utils.svg.CssConstants.ClassAndSelector;
+    import createClassAndSelector = powerbi.extensibility.utils.svg.CssConstants.createClassAndSelector;
+
+    // powerbi.extensibility.utils.type
+    import pixelConverterFromPoint = powerbi.extensibility.utils.type.PixelConverter.fromPoint;
+
+    // powerbi.extensibility.utils.formatting
+    import TextProperties = powerbi.extensibility.utils.formatting.TextProperties;
+    import textMeasurementService = powerbi.extensibility.utils.formatting.textMeasurementService;
+
+    const labelSelector = ".route-map-label";
+    const labelClassName = "route-map-label";
     export class Visual implements IVisual {
         
-        private connectionMapDataView: ConnectionMapDataView;
+        private routeMapDataView: RouteMapDataView;
         private targetHtmlElement: HTMLElement;
         private hostContainer: JQuery;
         private map: any;
@@ -40,8 +64,12 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
         private isDataValid: boolean = false;
         private selectionManager: ISelectionManager;
         private host: IVisualHost;
+        private isFirstMultipleSelection: boolean = true;
+        private tooltipServiceWrapper: ITooltipServiceWrapper;
 
-        private settings: ConnectionMapSettings;
+        private root: Selection<any>;
+        
+        private settings: RouteMapSettings;
 
         constructor(options: VisualConstructorOptions) {
             this.init(options);
@@ -49,13 +77,18 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
 
         public init(options: VisualConstructorOptions): void {
             this.selectionManager = options.host.createSelectionManager();
-            this.host = options.host;
-
+            this.host = options.host;            
+            
             this.targetHtmlElement = options.element;
 
-            this.addMapDivToDocument();
+            this.addMapDivToDocument();         
+            this.tooltipServiceWrapper = createTooltipServiceWrapper(
+                this.host.tooltipService,
+                options.element);
 
             this.hostContainer = $(this.targetHtmlElement).css('overflow-x', 'hidden');
+
+            this.root = d3.select(this.targetHtmlElement);
             this.initMap();
         }
 
@@ -70,8 +103,51 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                         displayName: "Routes",
                         properties: {
                             arcColor: this.settings.routes.getArcColor(),
-                            labelFontColor: this.settings.routes.getLabelFontColor(),
-                            showOutOfMapMarkerLabels: this.settings.routes.showOutOfMapMarkerLabels                           
+                            defaultThickness: this.settings.routes.defaultThickness,
+                            minThickness: this.settings.routes.minThickness,     
+                            maxThickness: this.settings.routes.maxThickness               
+                        },
+                        selector: null
+                    });
+                    break;
+                case 'markers': 
+                    objectEnumeration.push({
+                        objectName: objectName,
+                        displayName: "Markers",
+                        properties: {
+                            markerColor: this.settings.markers.getMarkerColor(),
+                            labelFontColor: this.settings.markers.getLabelFontColor(),                            
+                            radius: this.settings.markers.radius                           
+                        },
+                        selector: null
+                    });
+                    break;
+                case 'state1': 
+                    objectEnumeration.push({
+                        objectName: objectName,
+                        displayName: "State 1",
+                        properties: {
+                            stateColor: this.settings.state1.getStateColor()
+                        },
+                        selector: null
+                    });
+                    break;
+                case 'state2': 
+                    objectEnumeration.push({
+                        objectName: objectName,
+                        displayName: "State 2",
+                        properties: {
+                            stateColor: this.settings.state2.getStateColor()
+                        },
+                        selector: null
+                    });
+                    break;
+                case 'state3': 
+                    objectEnumeration.push({
+                        objectName: objectName,
+                        displayName: "State 3",
+                        properties: {
+                            stateColor: this.settings.state3.getStateColor()
                         },
                         selector: null
                     });
@@ -96,7 +172,7 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
 
         public initMap(): void {
 
-            this.map = L.map('map').setView([33.9415839, -118.4435494], 3);
+            this.map = L.map('map').setView([33.9415839, -118.4435494], 3);                      
 
             //add map tile
             var layer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -104,12 +180,11 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                         maxZoom: 18
             }).addTo(this.map);
 
-            this.connectionMapDataView = {
+            this.routeMapDataView = {
                 markers: {},
                 arcs: {},
                 arcsLayer: L.featureGroup(),
-                markersLayer: L.featureGroup(),
-                labelsLayer: L.featureGroup()
+                markersLayer: L.featureGroup()
             };
 
             this.setMapHandlers();
@@ -121,103 +196,34 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                 let dataView: DataView = options
                     && options.dataViews
                     && options.dataViews[0];
-
+                
                 this.clearMap();
-                this.connectionMapDataView = this.converter(dataView);
+                this.routeMapDataView = this.converter(dataView);
                 this.render();
             }
+            
+            let bounds = this.routeMapDataView.arcsLayer.getBounds();
+            
+            if(bounds && bounds.isValid()) {
+                this.map.fitBounds(bounds);    
+            }       
 
             this.map.invalidateSize();
             this.updateContainerViewports(options.viewport);
         }
 
-        private parseSettings(dataView: DataView): ConnectionMapSettings {
-            return ConnectionMapSettings.parse<ConnectionMapSettings>(dataView);
-        }
-
-        // returns:
-        // 0 - marker isn't on the line
-        // 1 - marker is in the end of the line
-        // -1 - marker is at the beginning of the line
-        private isMarkerOnTheLine(coords: L.LatLng[], markerPoint: L.LatLng): number {
-            if (!coords || coords.length === 0)
-                return 0;
-
-            if (coords[0].lat.toFixed(5) === markerPoint.lat.toFixed(5) &&
-                (coords[0].lng.toFixed(5) === markerPoint.lng.toFixed(5) || ((Math.abs(+coords[0].lng.toFixed(5)) + Math.abs(+markerPoint.lng.toFixed(5)) - 360) < 2)))
-                return -1;
-            else if (coords[coords.length - 1].lat.toFixed(5) === markerPoint.lat.toFixed(5) &&
-                (coords[coords.length - 1].lng.toFixed(5) === markerPoint.lng.toFixed(5) || ((Math.abs(+coords[coords.length - 1].lat.toFixed(5)) + Math.abs(+markerPoint.lat.toFixed(5)) - 360) < 2)))
-                return 1;
-            else return 0;
-        };
-
-        private isCoordVisible(latLng: L.LatLng): boolean {
-            let bounds = this.map.getBounds();
-
-            return latLng && latLng.lat < bounds.getNorth() &&
-                latLng.lat > bounds.getSouth() &&
-                latLng.lng > bounds.getWest() &&
-                latLng.lng < bounds.getEast();
-        }
-
-        private shiftPointToShowLabelCorrectly(nearestVisiblePoint: L.LatLng): L.LatLng {
-            let pixelMaxOffset = 20,
-                mapBorders = this.map.getPixelBounds(),
-                point = this.map.project(nearestVisiblePoint);
-
-            let offsetX = 0,
-                offsetY = 0;
-
-            if (Math.abs(point.y - mapBorders.min.y) < pixelMaxOffset) {
-                // point is on the top edge
-                offsetY = 10;
-            }
-
-            if (Math.abs(point.x - mapBorders.max.x) < pixelMaxOffset) {
-                // point is on the right edge
-                offsetX = -50;
-            }
-
-            if (Math.abs(point.x - mapBorders.min.x) < pixelMaxOffset) {
-                // point is on the left edge
-                offsetX = 10;
-            }
-            if (Math.abs(point.y - mapBorders.max.y) < pixelMaxOffset) {
-                // point is on the bottom edge
-                offsetY = -20;
-            }
-
-            point.x = point.x + offsetX;
-            point.y = point.y + offsetY;
-            return this.map.unproject(point);
+        private parseSettings(dataView: DataView): RouteMapSettings {
+            return RouteMapSettings.parse<RouteMapSettings>(dataView);
         }
         
         private midpointTo(pointFrom: L.LatLng, pointTo: L.LatLng): L.LatLng {
-            
-            //geodesic middle point
-            /*var a1 = pointFrom.lat * Math.PI / 180, b1 = pointFrom.lng * Math.PI / 180;
-            var a2 = pointTo.lat * Math.PI / 180, b2 = pointTo.lng * Math.PI / 180;
-
-            if (Math.abs(b2-b1) > Math.PI) b1 += 2*Math.PI; // crossing anti-meridian
-
-            var a3 = (a1+a2)/2;
-            var f1 = Math.tan(Math.PI/4 + a1/2);
-            var f2 = Math.tan(Math.PI/4 + a2/2);
-            var f3 = Math.tan(Math.PI/4 + a3/2);
-            var b3 = ((b2-b1)*Math.log(f3) + b1*Math.log(f2) - b2*Math.log(f1) ) / Math.log(f2/f1);
-
-            if (!isFinite(b3)) b3 = (b1+b2)/2; // parallel of latitude
-
-            var p = L.latLng((a3 * 180 / Math.PI), (b3 * 180 / Math.PI + 540) % 360 - 180); // normalise to −180..+180°*/
-
             return L.latLng((pointFrom.lat + pointTo.lat) / 2, (pointFrom.lng + pointTo.lng) / 2);
         };
         
-        private getRoot(angleCoeficient: number, radianLatitude: number, radianLongitude: number, distance: number): number[] {
+        private getRoot(angleCoeficient: number, latitude: number, longitude: number, distance: number): number[] {
             
-            var x0 = radianLatitude;
-            var y0 = radianLongitude;
+            var x0 = latitude;
+            var y0 = longitude;
             
             var k1 = angleCoeficient;
             var k2 = -k1 * x0 + y0;            
@@ -238,9 +244,9 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
             return rootArray;
         }
         
-        private getSpecialPointLatLng(fromLatLng: L.LatLng, toLatLng: L.LatLng, midLatLng: L.LatLng): L.LatLng {
-            let midLatRadian = midLatLng.lat * Math.PI / 180;
-            let midLngRadian = midLatLng.lng * Math.PI / 180;
+        private getSpecialPointLatLng(fromLatLng: L.LatLng, toLatLng: L.LatLng, midLatLng: L.LatLng, isMinus360Lng?: boolean): L.LatLng {
+            let midLat = midLatLng.lat;
+            let midLng = midLatLng.lng;
             
             let ang1 = (toLatLng.lng - fromLatLng.lng) / (toLatLng.lat - fromLatLng.lat);
             let ang2 = -(toLatLng.lat - fromLatLng.lat) / (toLatLng.lng - fromLatLng.lng);   
@@ -248,95 +254,61 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
             let deltaLat = toLatLng.lat - midLatLng.lat;
             let deltaLng = toLatLng.lng - midLatLng.lng;   
             
-            let distance = Math.sqrt(deltaLat * deltaLat + deltaLng * deltaLng)* Math.PI / 180;     
+            let distance = Math.sqrt(deltaLat * deltaLat + deltaLng * deltaLng);  
             
-            distance = distance > 0.5 ? distance / 2 : distance;
+            distance = distance * Math.PI / 180 > 0.6 ? distance / 2 : distance;
             
-            let latitudes = this.getRoot(ang2, midLatRadian, midLngRadian, distance);
+            let latitudes = this.getRoot(ang2, midLat, midLng, distance);
             let lat = fromLatLng.lat > 0 && toLatLng.lat > 0 ? latitudes[1]: latitudes[0];
-            let long = ((ang2 * (lat - midLatRadian) + midLngRadian) * 180 / Math.PI + 540) % 360 - 180;   
+            let long = ((ang2 * (lat - midLat) + midLng) );
             
-            return L.latLng(lat * 180/Math.PI, long);  
+            return L.latLng(lat, long );  
         }
         
-        private createCurvedLine(pointFrom: L.LatLng, pointTo: L.LatLng, market: string, settings: ConnectionMapSettings, distanceCoef?: number): L.Polyline {
+        private createLine(direction: Direction, settings: RouteMapSettings): L.Polyline {
             let l: any = L;
             
-            let midpoint = this.midpointTo(pointFrom, pointTo);                    
+            let pointFrom = direction.fromToLatLng.fromLatLng,
+                pointTo = direction.fromToLatLng.toLatLng;
             
-            let specialPoint = this.getSpecialPointLatLng(pointFrom, pointTo, midpoint);                            
-
-            let curve = l.curve(['M',[pointFrom.lat,pointFrom.lng],
-					   'Q',[specialPoint.lat, specialPoint.lng],
-						   [pointTo.lat, pointTo.lng]], {color: settings.routes.getArcColor()} );
+            let midpoint = this.midpointTo(pointFrom, pointTo);                                                                
             
-            return curve;
-        }
-
-        private createMarkerDirectionLabels(marker: L.CircleMarker, arcs: ConnectionMapArc[], title: string): L.Marker[] {
-            let markerPoint = marker.getLatLng(),
-                isMarkerInvisible = !this.isCoordVisible(markerPoint),
-                nearestVisiblePoints: L.LatLng[] = [],
-                labelLayer: L.FeatureGroup = L.featureGroup();
-
-            if (isMarkerInvisible) {
-
-                for (var item in arcs) {
-                    let connectionMapArc = arcs[item],
-                        coords = connectionMapArc.arc.getLatLngs();
-
-                    let isMarkerOnThePolyline = this.isMarkerOnTheLine(coords, markerPoint);
-                    if (isMarkerOnThePolyline === 0)
-                        continue;
-
-                    if (isMarkerOnThePolyline === -1) {
-                        for (var index in coords) {
-                            if (this.isCoordVisible(coords[index])) {
-                                nearestVisiblePoints.push(coords[index]);
-                                break;
-                            }
-                        }
-                    } else if (isMarkerOnThePolyline === 1) {
-                        for (var j = coords.length - 1; j >= 0; j--) {
-                            if (this.isCoordVisible(coords[j])) {
-                                nearestVisiblePoints.push(coords[j]);
-                                break;
-                            }
-                        }
-                    }
+            let stateValue = direction.stateValue;
+            let color;            
+            
+            if(stateValue !== undefined && stateValue !== null) {
+                let state1Min = direction.stateValueMin1 !== null ? direction.stateValueMin1 : -Number.MAX_VALUE,
+                    state1Max = direction.stateValueMax1 !== null ? direction.stateValueMax1 : Number.MAX_VALUE,
+                    state2Min = direction.stateValueMin2 !== null ? direction.stateValueMin2 : -Number.MAX_VALUE,
+                    state2Max = direction.stateValueMax2 !== null ? direction.stateValueMax2 : Number.MAX_VALUE,
+                    state3Min = direction.stateValueMin3 !== null ? direction.stateValueMin3 : -Number.MAX_VALUE,
+                    state3Max = direction.stateValueMax3 !== null ? direction.stateValueMax3 : Number.MAX_VALUE;                                  
+                
+                if (stateValue <= state1Max && stateValue >= state1Min && state1Min !== -state1Max) {
+                    color = settings.state1.getStateColor();
+                } else if (stateValue <= state2Max && stateValue >= state2Min && state2Min !== -state2Max) {
+                    color = settings.state2.getStateColor();
+                } else if (stateValue <= state3Max && stateValue >= state3Min && state3Min !== -state3Max) {
+                    color = settings.state3.getStateColor();
+                } else {
+                    color = settings.routes.getArcColor();
                 }
+            } else {
+                color = settings.routes.getArcColor();
             }
-
-            let labels: L.Marker[] = [];
-            for (var i = 0; i < nearestVisiblePoints.length; i++) {
-                let nearestVisiblePoint = this.shiftPointToShowLabelCorrectly(nearestVisiblePoints[i]);
-                let label = L.divIcon({ className: 'connection-map-direction-label', html: title });
-                labels.push(L.marker(nearestVisiblePoint, { icon: label }));
-            }
-
-            return labels;
-        }
-
-        private createMarkersDirectionLabels(markerList: ConnectionMapMarkerList): L.Marker[] {
-            let outOfBorderLabels: L.Marker[] = [];
-
-            for (var item in markerList) {
-                let markerWithArcs = markerList[item];
-
-                let newLabels = this.createMarkerDirectionLabels(markerWithArcs.marker, markerWithArcs.arcs, markerWithArcs.airportCode);
-
-                newLabels.forEach((item) => {
-                    outOfBorderLabels.push(item);
-                });
-            }
-
-            return outOfBorderLabels;
-        }
-
-        private addMarkersToLayer(markers: L.Marker[], layer: L.FeatureGroup): void {
-            markers.forEach((item) => {
-                layer.addLayer(item);
-            });
+            
+            let thicknessOptions;
+            if(direction.thicknessValue >= direction.thicknessMin && direction.thicknessValue <= direction.thicknessMax) {
+                thicknessOptions = this.getThicknessOptions(direction);      
+            }               
+            
+            let thickness = thicknessOptions
+                        ? settings.routes.minThickness + (direction.thicknessValue - thicknessOptions.minValue) * thicknessOptions.coeficient 
+                        : settings.routes.defaultThickness;
+            
+            let line = L.polyline([pointFrom, pointTo], {color: color, weight: thickness} );
+            
+            return line;
         }
 
         public updateContainerViewports(viewport: IViewport) {
@@ -352,29 +324,8 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
             document.getElementById('map').style.height = viewport.height.toString() + "px";
         }
 
-        private setPopupToElement(content: string, element: any): void { 
-            
-            if(!content) {
-                return;
-            }         
-                           
-            element.bindPopup(content, { autoPan: false });                  
-
-            let map = this.map;
-            
-            element.on("mouseover", function (e) {
-                this.openPopup(this, e.latlng);
-            });
-            
-            element.on('mouseout', function (e) {
-                if(this.getPopup().getContent()) {
-                    this.closePopup();
-                }                
-            });
-        }
-
         private setLabelToElement(content: string, element: any): void {
-            element.bindTooltip(content, { permanent: true, className: "connection-map-label", offset: [0, 0] });
+            element.bindTooltip(content, { permanent: true, className: "route-map-label", offset: [0, 0] });
         }
 
         private setSelectionStyle(selected: boolean, element: L.Path): void {
@@ -387,8 +338,8 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
         }
 
         private unselectAll(): void {
-            let markers = this.connectionMapDataView.markers;
-            let arcs = this.connectionMapDataView.arcs;
+            let markers = this.routeMapDataView.markers;
+            let arcs = this.routeMapDataView.arcs;
 
             for (var item in arcs) {
                 arcs[item].isSelected = false;
@@ -399,41 +350,45 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                 markers[item].isSelected = false;
                 this.setSelectionStyle(true, markers[item].marker);
             }
+            
+            this.isFirstMultipleSelection = true;
         }
 
         private setOnMarkerClickEvent(element: L.CircleMarker): void {
             let me = this;
 
-            element.on('click', function (e) {                
-                let markers = me.connectionMapDataView.markers;
-                let arcs = me.connectionMapDataView.arcs;
+            element.on('click', function (e) {                           
+                (e as L.MouseEvent).originalEvent.preventDefault();    
+                   
+                let markers = me.routeMapDataView.markers;
+                let arcs = me.routeMapDataView.arcs;
                 
                 let arcSelectionIds: ISelectionId[] = [];
                 
-                let connectionMapMarker: ConnectionMapMarker;
+                let routeMapMarker: RouteMapMarker;
                 
                 for(var item in markers) {
                     if(markers[item].marker === this) {
-                        connectionMapMarker = markers[item];
+                        routeMapMarker = markers[item];
                         break;
                     }
                 } 
                 
                 let isMultipleSelection = (e as L.MouseEvent).originalEvent.ctrlKey;
                 
-                if(!connectionMapMarker || (connectionMapMarker.isSelected && !isMultipleSelection)) {
+                if(!routeMapMarker || (routeMapMarker.isSelected && !isMultipleSelection)) {
                     return;
                 }
                 
-                connectionMapMarker.arcs.map((value) => {
-                    if(!connectionMapMarker.isSelected || value.isSelected) {
+                routeMapMarker.arcs.map((value) => {
+                    if(!routeMapMarker.isSelected || value.isSelected) {
                         arcSelectionIds.push(value.selectionId);
                     }
                 });
                 
                 me.selectionManager.select(arcSelectionIds, isMultipleSelection).then((ids: ISelectionId[]) => {                    
                     
-                    if (!isMultipleSelection) {
+                    if (me.isFirstMultipleSelection || !isMultipleSelection) {
                         for (var item in arcs) {
                             arcs[item].isSelected = false;
                             me.setSelectionStyle(false, arcs[item].arc);
@@ -444,20 +399,22 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                                 markers[item].isSelected = false;
                                 me.setSelectionStyle(false, markers[item].marker);
                             }
-                        }                        
+                        }     
+                        
+                        me.isFirstMultipleSelection = false;                   
                     }  
                     
-                    connectionMapMarker.isSelected = !connectionMapMarker.isSelected;
-                    me.setSelectionStyle(connectionMapMarker.isSelected, connectionMapMarker.marker);
+                    routeMapMarker.isSelected = !routeMapMarker.isSelected;
+                    me.setSelectionStyle(routeMapMarker.isSelected, routeMapMarker.marker);
                     
-                    connectionMapMarker.arcs.forEach((item) => {
-                        if (item.isSelected !== connectionMapMarker.isSelected) {
-                            item.isSelected = connectionMapMarker.isSelected;
+                    routeMapMarker.arcs.forEach((item) => {
+                        if (item.isSelected !== routeMapMarker.isSelected) {
+                            item.isSelected = routeMapMarker.isSelected;
                             me.setSelectionStyle(item.isSelected, item.arc);
                             
                             item.markers.forEach((marker) => {
-                                if (marker !== connectionMapMarker) {
-                                    marker.isSelected = connectionMapMarker.isSelected;
+                                if (marker !== routeMapMarker) {
+                                    marker.isSelected = routeMapMarker.isSelected;
                                     me.setSelectionStyle(marker.isSelected, marker.marker);
                                 }
                             });
@@ -473,29 +430,29 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
             element.on('click', function (e) {  
                 (e as L.MouseEvent).originalEvent.preventDefault();              
                 
-                let markers = me.connectionMapDataView.markers;
-                let arcs = me.connectionMapDataView.arcs;
+                let markers = me.routeMapDataView.markers;
+                let arcs = me.routeMapDataView.arcs;
                 
-                let connectionMapArc: ConnectionMapArc;
+                let routeMapArc: RouteMapArc;
                 
                 for(var item in arcs) {
                     if(arcs[item].arc === this) {
-                        connectionMapArc = arcs[item];
+                        routeMapArc = arcs[item];
                         break;
                     }
                 }                
                 
                 let isMultipleSelection = (e as L.MouseEvent).originalEvent.ctrlKey;
                 
-                if(!connectionMapArc || (connectionMapArc.isSelected && !isMultipleSelection)) {
+                if(!routeMapArc || (routeMapArc.isSelected && !isMultipleSelection)) {
                     return;
                 }
                 
-                let selectedId: ISelectionId = connectionMapArc.selectionId;              
+                let selectedId: ISelectionId = routeMapArc.selectionId;              
                            
                 me.selectionManager.select(selectedId, isMultipleSelection).then((ids: ISelectionId[]) => {
                     
-                    if(!isMultipleSelection) {
+                    if(me.isFirstMultipleSelection || !isMultipleSelection) {
                         for (var item in markers) {
                             markers[item].isSelected = false;
                             me.setSelectionStyle(false, markers[item].marker);
@@ -506,13 +463,15 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                                 arcs[item].isSelected = false;
                                 me.setSelectionStyle(false, arcs[item].arc);
                             }
-                        }
+                        }                        
+                        
+                        me.isFirstMultipleSelection = false;  
                     }       
                     
-                    connectionMapArc.isSelected = !connectionMapArc.isSelected;
-                    me.setSelectionStyle(connectionMapArc.isSelected, connectionMapArc.arc);
+                    routeMapArc.isSelected = !routeMapArc.isSelected;
+                    me.setSelectionStyle(routeMapArc.isSelected, routeMapArc.arc);
 
-                    connectionMapArc.markers.forEach((item: ConnectionMapMarker) => {  
+                    routeMapArc.markers.forEach((item: RouteMapMarker) => {  
                         let markerGotSelectedElements = false;
                         
                         for(var i in item.arcs) {
@@ -526,30 +485,18 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                             item.isSelected = !item.isSelected;                          
                             me.setSelectionStyle(item.isSelected, item.marker);
                         }                       
-                    });       
+                    });  
                 });
             });
         }
 
-        private createCustomizableArc(fromLatLng: L.LatLng, toLatLng: L.LatLng, settings: ConnectionMapSettings): L.Polyline {
-
-            let l: any = L;
-
-            let arc = l.Polyline.Arc(fromLatLng, toLatLng, {
-                color: settings.routes.getArcColor(),
-                vertices: 250
-            });
-
-            return arc;
-        }
-
-        private createCustomizableMarker(latLng: L.LatLng, settings: ConnectionMapSettings): L.CircleMarker {
+        private createCustomizableMarker(latLng: L.LatLng, settings: RouteMapSettings): L.CircleMarker {
 
             let marker = L.circleMarker(latLng, {
-                color: "blue",
-                fillColor: "blue",
+                color: settings.markers.getMarkerColor(),
+                fillColor:  settings.markers.getMarkerColor(),
                 fillOpacity: 1,
-                radius: 5
+                radius: settings.markers.radius
             });
 
             return marker;
@@ -560,26 +507,46 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
         }
 
         public render(): void {
-            this.map.addLayer(this.connectionMapDataView.arcsLayer);
-            this.map.addLayer(this.connectionMapDataView.markersLayer);
-            this.map.addLayer(this.connectionMapDataView.labelsLayer);
+            this.map.addLayer(this.routeMapDataView.arcsLayer);
+            this.map.addLayer(this.routeMapDataView.markersLayer);
             
-            this.setLabelFontColor(this.settings.routes.getLabelFontColor());            
+            this.setLabelFontColor(this.settings.markers.getLabelFontColor());  
+            
+            this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getArcsSelection(),(tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
+                return tooltipEvent.data.tooltipInfo;
+            });         
+        }
+        
+        private getArcsSelection(): UpdateSelection<RouteMapArc> {
+            let arcsSelection: UpdateSelection<RouteMapArc>;
+			let arcsElements: Selection<RouteMapArc>;
+			
+			arcsElements = this.root.select("g").selectAll(".leaflet-interactive");
+            
+            let array = [];                      
+            
+            for(var item in this.routeMapDataView.arcs) {
+                array.push(this.routeMapDataView.arcs[item]);
+            } 
+            
+			arcsSelection = arcsElements.data(array.filter((arc) => {
+                return arc.tooltipInfo.length > 0;
+            }));
+            
+            return arcsSelection;
         }
 
         public clearMap(): void {
-            let dataView = this.connectionMapDataView;
-            if (dataView && dataView.arcsLayer && dataView.markersLayer && dataView.labelsLayer) {
+            let dataView = this.routeMapDataView;
+            if (dataView && dataView.arcsLayer && dataView.markersLayer) {
                 dataView.arcsLayer.clearLayers();
                 dataView.markersLayer.clearLayers();
-                dataView.labelsLayer.clearLayers();
             }
         }
         
         private parseDataViewToDirections(dataView: DataView): Direction[] {
             let directions: Direction[] = [];
 
-            let marketCategory = dataView.categorical.categories[0];
             let codesFrom: any[] = dataView.categorical.categories[1].values,
                 codesTo: any[] = dataView.categorical.categories[2].values,
                 markets: any[] = dataView.categorical.categories[0].values;
@@ -587,7 +554,17 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
             let latsFrom: any[] = dataView.categorical.values[0].values,
                 latsTo: any[] = dataView.categorical.values[2].values,
                 longsFrom: any[] = dataView.categorical.values[1].values,
-                longsTo: any[] = dataView.categorical.values[3].values;           
+                longsTo: any[] = dataView.categorical.values[3].values,
+                stateValues: any[],
+                stateValuesMin1: any[],
+                stateValuesMax1: any[],
+                stateValuesMin2: any[],
+                stateValuesMax2: any[],
+                stateValuesMin3: any[],
+                stateValuesMax3: any[],
+                thicknessValues: any[],
+                thicknessValuesMin: any[],
+                thicknessValuesMax: any[];           
                 
             let tooltipColumns: DataViewValueColumn[] = [];
             
@@ -595,55 +572,168 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                 let column = dataView.categorical.values[i];
                 if(column.source && column.source.roles["tooltips"]) {
                     tooltipColumns.push(column);
+                } 
+                
+                if(column.source && column.source.roles["stateValue"]) {
+                    stateValues = column.values;
+                } 
+                
+                if(column.source && column.source.roles["stateValueMin1"]) {
+                    stateValuesMin1 = column.values;
+                } 
+                
+                if(column.source && column.source.roles["stateValueMax1"]) {
+                    stateValuesMax1 = column.values;
+                } 
+                
+                if(column.source && column.source.roles["stateValueMin2"]) {
+                    stateValuesMin2 = column.values;
+                } 
+                
+                if(column.source && column.source.roles["stateValueMax2"]) {
+                    stateValuesMax2 = column.values;
+                } 
+                
+                if(column.source && column.source.roles["stateValueMin3"]) {
+                    stateValuesMin3 = column.values;
+                } 
+                
+                if(column.source && column.source.roles["stateValueMax3"]) {
+                    stateValuesMax3 = column.values;
+                } 
+                
+                if(column.source && column.source.roles["thicknessValue"]) {
+                    thicknessValues = column.values;
+                }
+                
+                if(column.source && column.source.roles["thicknessMin"]) {
+                    thicknessValuesMin = column.values;
+                }
+                
+                if(column.source && column.source.roles["thicknessMax"]) {
+                    thicknessValuesMax = column.values;
                 }
             }    
-            
-            let tooltips: string[] = [];
-            
-            if(tooltipColumns.length > 0) {
-                for(var k = 0; k < tooltipColumns[0].values.length; ++k) {
-                    let tooltip: string = tooltipColumns[0].source.displayName + ": " + tooltipColumns[0].values[k];
-                    
-                    for(var j = 1; j < tooltipColumns.length; ++j) {
-                        tooltip += "<br>" + tooltipColumns[j].source.displayName  + ": " + tooltipColumns[j].values[k];
-                    }
-                    
-                    tooltips.push(tooltip);
-                }
-            }      
 
-            markets.forEach((item: any, index: number) => {                
-                directions.push({
-                    market: markets[index],
-                    index: index,
-                    airportCodeFrom: codesFrom[index],
-                    airportCodeTo: codesTo[index],
-                    latitudeFrom: latsFrom[index],
-                    longitudeFrom: longsFrom[index],
-                    latitudeTo: latsTo[index],
-                    longitudeTo: longsTo[index],
-                    tooltip: tooltips[index]
-                });
-            });
+            markets.forEach((item: any, index: number) => {           
+                let tooltipInfo: VisualTooltipDataItem[] = [];
+                tooltipColumns.forEach((column) => {                    
+                    let format = ValueFormatter.getFormatStringByColumn(column.source, true),
+                    name = column.source.displayName,
+                    value = column.values[index] ? column.values[index] : "";                                   
+                    
+                    tooltipInfo.push({displayName: name, value: ValueFormatter.format(value, format)});
+                });                         
+                
+                let fromToLatLng = this.getActualFromToLatLng(latsFrom[index], longsFrom[index], latsTo[index], longsTo[index]);
+                     
+                if(fromToLatLng !== null) {
+                    directions.push({
+                        market: markets[index],
+                        index: index,
+                        locationFrom: codesFrom[index],
+                        locationTo: codesTo[index],
+                        fromToLatLng: fromToLatLng,
+                        stateValue: stateValues ? stateValues[index] : null,
+                        stateValueMin1: stateValuesMin1 ? stateValuesMin1[index] : null,
+                        stateValueMax1: stateValuesMax1 ? stateValuesMax1[index] : null,
+                        stateValueMin2: stateValuesMin2 ? stateValuesMin2[index] : null,
+                        stateValueMax2: stateValuesMax2 ? stateValuesMax2[index] : null,
+                        stateValueMin3: stateValuesMin3 ? stateValuesMin3[index] : null,
+                        stateValueMax3: stateValuesMax3 ? stateValuesMax3[index] : null,
+                        thicknessValue: thicknessValues ? thicknessValues[index] : null,
+                        thicknessMax: thicknessValuesMax ? thicknessValuesMax[index] : null,
+                        thicknessMin: thicknessValuesMin ? thicknessValuesMin[index] : null,
+                        tooltipInfo: tooltipInfo
+                    });
+                }                              
+            });                      
             
             return directions;
         }
         
-        private createConnectionMapArc(direction: Direction, 
-                                       settings: ConnectionMapSettings, 
-                                       selectionCategoryColumn: DataViewCategoricalColumn): ConnectionMapArc {
-                                           
-            let fromLatLng = L.latLng(direction.latitudeFrom, direction.longitudeFrom),
-                toLatLng = L.latLng(direction.latitudeTo, direction.longitudeTo);            
-
-            let airportCodeFrom = direction.airportCodeFrom,
-                airportCodeTo = direction.airportCodeTo;
+        private getThicknessOptions(direction: Direction): ThicknessOptions {
             
+            if(!this.settings.routes.minThickness || !this.settings.routes.maxThickness || !direction.thicknessMin || !direction.thicknessMax) {
+                return null;
+            }
             
-            //let arc = this.createCustomizableArc(fromLatLng, toLatLng, settings);
-            let arc = this.createCurvedLine(fromLatLng, toLatLng, direction.market, settings);          
+            let minValue = direction.thicknessMin,
+                maxValue = direction.thicknessMax;
+            
+            let coef = (this.settings.routes.maxThickness - this.settings.routes.minThickness) / (maxValue - minValue);
+            
+            if(coef === Number.NaN) {
+                return null;
+            }
+            
+            return {
+                coeficient: coef,
+                minValue: minValue 
+            };
+        }
+        
+        private getDistance(fromLatLng: L.LatLng, toLatLng: L.LatLng): number {
+            let deltaLat = toLatLng.lat - fromLatLng.lat;
+            let deltaLng = toLatLng.lng - fromLatLng.lng; 
+            
+            return Math.sqrt(deltaLat * deltaLat + deltaLng * deltaLng)* Math.PI / 180;  
+        }
+        
+        private getActualFromToLatLng(fromLat: number, fromLng: number, toLat: number, toLng: number): FromToLatLng {            
+            
+            if(fromLat === null || fromLng === null || toLat === null || toLng == null) {
+                return null;
+            }
+            
+            let fromLatLng = L.latLng(fromLat, fromLng),
+                toLatLng = L.latLng(toLat, toLng),
+                fromLatLng360 = L.latLng(fromLatLng.lat, fromLatLng.lng - 360),
+                toLatLng360 = L.latLng(toLatLng.lat, toLatLng.lng - 360);
+            
+            let distance1 = this.getDistance(fromLatLng, toLatLng),
+                distance2 = this.getDistance(fromLatLng360, toLatLng),
+                distance3 = this.getDistance(fromLatLng, toLatLng360),
+                distance4 = this.getDistance(fromLatLng360, toLatLng360);
+            
+            let minDistance = distance1,
+                fromToLatLng = { toLatLng: toLatLng, fromLatLng: fromLatLng, isFromLngMinus360: false, isToLngMinus360: false };
+            
+            if(distance2 < minDistance){
+                minDistance = distance2;
+                fromToLatLng.toLatLng = toLatLng;
+                fromToLatLng.fromLatLng = fromLatLng360;
+                fromToLatLng.isFromLngMinus360 = true;
+                fromToLatLng.isToLngMinus360 = false;                
+            }
+            
+            if(distance3 < minDistance){
+                minDistance = distance3;
+                fromToLatLng.toLatLng = toLatLng360;
+                fromToLatLng.fromLatLng = fromLatLng;
+                fromToLatLng.isFromLngMinus360 = false;
+                fromToLatLng.isToLngMinus360 = true;   
+            }
+            
+            if(distance4 < minDistance && !(toLatLng360.lng < -180 && fromLatLng360.lng < -180)){
+                minDistance = distance4;
+                fromToLatLng.toLatLng = toLatLng360;
+                fromToLatLng.fromLatLng = fromLatLng360;
+                fromToLatLng.isFromLngMinus360 = true;
+                fromToLatLng.isToLngMinus360 = true;   
+            }
+            
+            return fromToLatLng;
+        }
+        
+        private createRouteMapArc(direction: Direction, 
+                                       settings: RouteMapSettings, 
+                                       selectionCategoryColumn: DataViewCategoricalColumn): RouteMapArc {                                                                                             
 
-            this.setPopupToElement(direction.tooltip, arc);
+            let locationFrom = direction.locationFrom,
+                locationTo = direction.locationTo;            
+
+            let arc = this.createLine(direction, settings);          
             
             this.setOnArcClickEvent(arc);
 
@@ -654,37 +744,79 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
             return {
                 arc: arc,
                 markers: [],
+                tooltipInfo: direction.tooltipInfo,
                 isSelected: false,
                 selectionId: selectionId
             };
         }
         
-        private createConnectionMapMarker(direction: Direction, isDestinationPoint: boolean, latLng: L.LatLng, settings: ConnectionMapSettings): ConnectionMapMarker {                
+        private createRouteMapMarker(direction: Direction, isDestinationPoint: boolean, latLng: L.LatLng, settings: RouteMapSettings): RouteMapMarker {                
             
             let marker = this.createCustomizableMarker(latLng, settings);
 
-            let label = isDestinationPoint ? direction.airportCodeTo : direction.airportCodeFrom;
-            this.setLabelToElement(label, marker);
+            let label = isDestinationPoint ? direction.locationTo : direction.locationFrom;
+            this.setLabelToElement(label.toString(), marker);
 
-            let lat = isDestinationPoint ? direction.latitudeTo : direction.latitudeFrom;
-            let long = isDestinationPoint ? direction.longitudeTo : direction.longitudeFrom;
-            
-            let popupMessage = "Lat: " + lat + "<br>Long: " + long;
-            this.setPopupToElement(popupMessage, marker);
+            let lat = isDestinationPoint ? direction.fromToLatLng.toLatLng.lat : direction.fromToLatLng.fromLatLng.lat;
+            let long = isDestinationPoint ? direction.fromToLatLng.toLatLng.lng : direction.fromToLatLng.fromLatLng.lng;
+
             this.setOnMarkerClickEvent(marker);
 
             return {
                 marker: marker,
                 arcs: [], 
-                airportCode: direction.airportCodeFrom,
+                location: direction.locationFrom,
                 isSelected: false
             };
         }
 
-        public converter(dataView: DataView): ConnectionMapDataView {
+        private limitProperties(settings: RouteMapSettings) {
+            let radius = settings.markers.radius;
+            
+            if(radius > RouteMapMarkersSettings.maximumPossibleRadius) {
+                radius = RouteMapMarkersSettings.maximumPossibleRadius;
+            } else if(radius < RouteMapMarkersSettings.minimunPossibleRadius) {
+                radius = RouteMapMarkersSettings.minimunPossibleRadius;
+            }
+            
+            settings.markers.radius = radius;
+            
+            let defaultThickness = settings.routes.defaultThickness;
+            
+            if(defaultThickness > RouteMapRoutesSettings.maximumPossibleThickness) {
+                defaultThickness = RouteMapRoutesSettings.maximumPossibleThickness;
+            } else if(defaultThickness < RouteMapRoutesSettings.minimumPossibleThickness) {
+                defaultThickness = RouteMapRoutesSettings.minimumPossibleThickness;
+            }
+            
+            settings.routes.defaultThickness = defaultThickness;
+            
+            let minThickness = settings.routes.minThickness;
+            
+            if(minThickness > RouteMapRoutesSettings.maximumPossibleThickness) {
+                minThickness = RouteMapRoutesSettings.maximumPossibleThickness;
+            } else if(minThickness < RouteMapRoutesSettings.minimumPossibleThickness) {
+                minThickness = RouteMapRoutesSettings.minimumPossibleThickness;
+            }
+            
+            settings.routes.minThickness = minThickness;
+            
+            let maxThickness = settings.routes.maxThickness;
+            
+            if(maxThickness > RouteMapRoutesSettings.maximumPossibleThickness) {
+                maxThickness = RouteMapRoutesSettings.maximumPossibleThickness;
+            } else if(maxThickness < RouteMapRoutesSettings.minimumPossibleThickness) {
+                maxThickness = RouteMapRoutesSettings.minimumPossibleThickness;
+            }
+            
+            settings.routes.maxThickness = maxThickness;                     
+        }
+
+        public converter(dataView: DataView): RouteMapDataView {
 
             this.isDataValid = false;
             let settings = this.settings = this.parseSettings(dataView);
+            this.limitProperties(settings);
             
             if (!dataView
                 || !dataView.categorical
@@ -699,14 +831,14 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                 || !dataView.categorical.values[0]
                 || !dataView.categorical.values[1]
                 || !dataView.categorical.values[2]
-                || !dataView.categorical.values[3]) {
+                || !dataView.categorical.values[3]
+                || dataView.categorical.values[3].source.roles["tooltips"]) {
 
                 return {
                     arcs: {},
                     arcsLayer: L.featureGroup(),
                     markers: {},
-                    markersLayer: L.featureGroup(),
-                    labelsLayer: L.featureGroup()
+                    markersLayer: L.featureGroup()
                 };
             }                  
 
@@ -714,57 +846,106 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
             
             let marketCategory = dataView.categorical.categories[0];
 
-            let processedArcs: ConnectionMapArcList = {},
-                processedMarkers: ConnectionMapMarkerList = {};
+            let processedArcs: RouteMapArcList = {},
+                createdMarkers: RouteMapMarkerList = {},
+                createdMarkers360: RouteMapMarkerList = {};
 
             let markersLayer: L.FeatureGroup = L.featureGroup(),
-                arcsLayer: L.FeatureGroup = L.featureGroup(),
-                labelsLayer: L.FeatureGroup = L.featureGroup();
+                arcsLayer: L.FeatureGroup = L.featureGroup();
 
             for (var item in directions) {
                 let direction = directions[item];
                 let keyArc = direction.market,
-                    keyFrom = direction.airportCodeFrom,
-                    keyTo = direction.airportCodeTo;                    
+                    keyFrom = direction.locationFrom,
+                    keyTo = direction.locationTo;
+                    
+                if(!keyArc || !keyFrom || !keyTo) {
+                    continue;
+                }    
+                
+                let isFromLngMinus360 = direction.fromToLatLng.isFromLngMinus360,
+                    isToLngMinus360 = direction.fromToLatLng.isToLngMinus360;                
 
-                let connectionMapArc = this.createConnectionMapArc(direction, settings, marketCategory);    
+                let routeMapArc = this.createRouteMapArc(direction, settings, marketCategory);    
 
-                processedArcs[keyArc] = connectionMapArc;
-                arcsLayer.addLayer(connectionMapArc.arc);
+                processedArcs[keyArc] = routeMapArc;
+                arcsLayer.addLayer(routeMapArc.arc);
 
-                let connectionMapMarkerFrom: ConnectionMapMarker,
-                    connectionMapMarkerTo: ConnectionMapMarker;
+                let routeMapMarkerFrom: RouteMapMarker,
+                    routeMapMarkerTo: RouteMapMarker;
 
-                if (!processedMarkers[keyFrom]) {
-                    let fromLatLng = L.latLng(direction.latitudeFrom, direction.longitudeFrom);
-                    connectionMapMarkerFrom = this.createConnectionMapMarker(direction, false, fromLatLng, settings);
+                if (!createdMarkers[keyFrom] && !isFromLngMinus360) {
+                    let fromLatLng = direction.fromToLatLng.fromLatLng;
+                    routeMapMarkerFrom = this.createRouteMapMarker(direction, false, fromLatLng, settings);
 
-                    processedMarkers[keyFrom] = connectionMapMarkerFrom;
-                    markersLayer.addLayer(connectionMapMarkerFrom.marker);
+                    createdMarkers[keyFrom] = routeMapMarkerFrom;
+                } else if(!createdMarkers360[keyFrom] && isFromLngMinus360) {
+                    let fromLatLng = direction.fromToLatLng.fromLatLng;
+                    routeMapMarkerFrom = this.createRouteMapMarker(direction, false, fromLatLng, settings);
+
+                    createdMarkers360[keyFrom] = routeMapMarkerFrom;
+                } else if(createdMarkers[keyFrom] && !isFromLngMinus360) {
+                    routeMapMarkerFrom = createdMarkers[keyFrom];
+                } else if(createdMarkers360[keyFrom] && isFromLngMinus360) {
+                    routeMapMarkerFrom = createdMarkers360[keyFrom];
+                }                
+
+                if (!createdMarkers[keyTo] && !isToLngMinus360) {
+                    let toLatLng = direction.fromToLatLng.toLatLng; 
+                    routeMapMarkerTo = this.createRouteMapMarker(direction, true, toLatLng, settings);
+
+                    createdMarkers[keyTo] = routeMapMarkerTo;
+                    
+                } else if(!createdMarkers360[keyTo] && isToLngMinus360) {
+                    let toLatLng = direction.fromToLatLng.toLatLng;
+                    routeMapMarkerTo = this.createRouteMapMarker(direction, true, toLatLng, settings);
+                    createdMarkers360[keyTo] = routeMapMarkerTo;
+                    
+                } else if(createdMarkers[keyTo] && !isToLngMinus360) {
+                    routeMapMarkerTo = createdMarkers[keyTo];
+                } else if(createdMarkers360[keyTo] && isToLngMinus360) {
+                    routeMapMarkerTo = createdMarkers360[keyTo];
+                }  
+
+                if(!isFromLngMinus360) {
+                    createdMarkers[keyFrom].arcs.push(routeMapArc);
                 } else {
-                    connectionMapMarkerFrom = processedMarkers[keyFrom];
+                    createdMarkers360[keyFrom].arcs.push(routeMapArc);
                 }
-
-                if (!processedMarkers[keyTo]) {
-                    let toLatLng = L.latLng(direction.latitudeTo, direction.longitudeTo); 
-                    connectionMapMarkerTo = this.createConnectionMapMarker(direction, true, toLatLng, settings);
-
-                    processedMarkers[keyTo] = connectionMapMarkerTo;
-                    markersLayer.addLayer(connectionMapMarkerTo.marker);
+                
+                if(!isToLngMinus360) {
+                    createdMarkers[keyTo].arcs.push(routeMapArc);
                 } else {
-                    connectionMapMarkerTo = processedMarkers[keyTo];
-                }
+                    createdMarkers360[keyTo].arcs.push(routeMapArc);
+                }                
 
-                processedMarkers[keyFrom].arcs.push(connectionMapArc);
-                processedMarkers[keyTo].arcs.push(connectionMapArc);
-                processedArcs[keyArc].markers.push(connectionMapMarkerFrom);
-                processedArcs[keyArc].markers.push(connectionMapMarkerTo);
+                processedArcs[keyArc].markers.push(routeMapMarkerFrom);
+                processedArcs[keyArc].markers.push(routeMapMarkerTo);
             }
-
-            if (this.settings.routes.showOutOfMapMarkerLabels) {
-                //not working with curves
-              /*  let outOfBorderLabels: L.Marker[] = this.createMarkersDirectionLabels(processedMarkers);
-                this.addMarkersToLayer(outOfBorderLabels, labelsLayer);*/
+            
+            let processedMarkers: RouteMapMarkerList = createdMarkers;
+            
+            for(var item in createdMarkers) {
+                markersLayer.addLayer(createdMarkers[item].marker);
+            }
+            
+            for(var item in createdMarkers360) {
+                let currentMarker = createdMarkers360[item];
+                
+                if(processedMarkers[item]) {
+                    let processedMarker = processedMarkers[item];                                     
+                    let arcsArray = processedMarker.arcs.concat(currentMarker.arcs);
+                    
+                    processedMarker.arcs = arcsArray;
+                    currentMarker.arcs = arcsArray;
+                    
+                    processedMarkers[item + "_360"] = currentMarker;                   
+                                   
+                } else {
+                    processedMarkers[item + "_360"] = currentMarker;
+                }
+                
+                markersLayer.addLayer(processedMarkers[item + "_360"].marker);     
             }
 
             this.isDataValid = true;                  
@@ -773,8 +954,7 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                 arcs: processedArcs,
                 markers: processedMarkers,
                 markersLayer: markersLayer,
-                arcsLayer: arcsLayer,
-                labelsLayer: labelsLayer
+                arcsLayer: arcsLayer
             };
         }
 
@@ -783,17 +963,7 @@ module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF 
                 return;
             }
 
-            let markers = this.connectionMapDataView.markers;
-            let labelsLayer = this.connectionMapDataView.labelsLayer;
-
-            labelsLayer.clearLayers();
-
-            let showLayers = this.settings.routes.showOutOfMapMarkerLabels;
-            if (showLayers) {
-                //not working with curves
-               /* let outOfBorderLabels: L.Marker[] = this.createMarkersDirectionLabels(markers);
-                this.addMarkersToLayer(outOfBorderLabels, labelsLayer);*/
-            }
+            let markers = this.routeMapDataView.markers;
         }
 
         private setMapHandlers(): void {

@@ -25,51 +25,72 @@
  */
 
 module powerbi.extensibility.visual.PBI_CV_DD900773_4713_45DE_BE5F_77B59D33F7DF  {
-    export interface ConnectionMapDataView {
-        markers: ConnectionMapMarkerList,
-        arcs: ConnectionMapArcList,
+    
+    import TooltipEnabledDataPoint = powerbi.extensibility.utils.tooltip.TooltipEnabledDataPoint;
+    
+    export interface RouteMapDataView {
+        markers: RouteMapMarkerList,
+        arcs: RouteMapArcList,
         arcsLayer: L.FeatureGroup,
-        markersLayer: L.FeatureGroup,
-        labelsLayer: L.FeatureGroup
+        markersLayer: L.FeatureGroup
     }
     
-    export interface ConnectionMapMarkerList {
-        [key: string]: ConnectionMapMarker;
+    export interface RouteMapMarkerList {
+        [key: string]: RouteMapMarker;
     }
     
-    export interface ConnectionMapArcList {
-        [key: string]: ConnectionMapArc;
+    export interface RouteMapArcList {
+        [key: string]: RouteMapArc;
     }
     
-    export interface ConnectionMapMarker {
+    export interface RouteMapMarker {
         marker: L.CircleMarker, 
-        airportCode: string,
-        arcs: ConnectionMapArc[],
+        location: string,
+        arcs: RouteMapArc[],
         isSelected: boolean
     }
     
-    export interface ConnectionMapArc {
+    export interface FromToLatLng {
+        toLatLng: L.LatLng,
+        fromLatLng: L.LatLng,
+        isFromLngMinus360: boolean,
+        isToLngMinus360: boolean
+    }
+    
+    export interface RouteMapArc extends TooltipEnabledDataPoint {
         arc: L.Polyline, 
-        markers: ConnectionMapMarker[],
+        markers: RouteMapMarker[],
         isSelected: boolean,
         selectionId: ISelectionId
     }
     
-    export interface ConnectionMapAirport {
-        code: string,
+    export interface RouteMapPoint {
+        name: string,
         latitude: number,
         longitude: number
     }
     
+    export interface ThicknessOptions {
+        minValue: number,
+        coeficient: number
+    } 
+    
     export interface Direction {
         market: string,
         index: number,
-        airportCodeFrom: string,
-        airportCodeTo: string,
-        latitudeFrom: number,
-        longitudeFrom: number,
-        latitudeTo: number,
-        longitudeTo: number,
-        tooltip: string      
+        locationFrom: string,
+        locationTo: string,
+        fromToLatLng: FromToLatLng,
+        stateValue: number,
+        stateValueMin1: number,
+        stateValueMax1: number,
+        stateValueMin2: number,
+        stateValueMax2: number,
+        stateValueMin3: number,
+        stateValueMax3: number,
+        thicknessValue: number,
+        thicknessMin: number,
+        thicknessMax: number,
+        tooltipInfo: VisualTooltipDataItem[]  
     }
 }

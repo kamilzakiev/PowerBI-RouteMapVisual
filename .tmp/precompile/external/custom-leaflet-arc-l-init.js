@@ -1,1 +1,0 @@
-var L = window["L"];
