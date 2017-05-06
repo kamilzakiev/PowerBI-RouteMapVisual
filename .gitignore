@@ -1,6 +1,6 @@
 node_modules
-#.tmp
-#.vscode
+.tmp
+.vscode
 dist
 typings
 .api
