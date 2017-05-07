@@ -54,6 +54,8 @@ module powerbi.extensibility.visual {
 
     const labelSelector = ".route-map-label";
     const labelClassName = "route-map-label";
+    const markerClass: string = "route-map-circleMarker";
+    
     export class Visual implements IVisual {
         
         private routeMapDataView: RouteMapDataView;
@@ -70,6 +72,7 @@ module powerbi.extensibility.visual {
         private root: Selection<any>;
         
         private settings: RouteMapSettings;
+        
 
         constructor(options: VisualConstructorOptions) {
             this.init(options);
@@ -496,7 +499,8 @@ module powerbi.extensibility.visual {
                 color: settings.markers.getMarkerColor(),
                 fillColor:  settings.markers.getMarkerColor(),
                 fillOpacity: 1,
-                radius: settings.markers.radius
+                radius: settings.markers.radius,
+                className: markerClass
             });
 
             return marker;
@@ -514,7 +518,11 @@ module powerbi.extensibility.visual {
             
             this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getArcsSelection(),(tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
                 return tooltipEvent.data.tooltipInfo;
-            });         
+            }); 
+            
+            this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getMarkersSelection(),(tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
+                return tooltipEvent.data.tooltipInfo;
+            });        
         }
         
         private getArcsSelection(): UpdateSelection<RouteMapArc> {
@@ -534,6 +542,23 @@ module powerbi.extensibility.visual {
             }));
             
             return arcsSelection;
+        }
+        
+        private getMarkersSelection(): UpdateSelection<RouteMapMarker> {
+            let markerSelection: UpdateSelection<RouteMapMarker>;
+			let markerElements: Selection<RouteMapMarker>;
+			
+			markerElements = this.root.select("g").selectAll("." + markerClass);
+            
+            let array = [];                      
+            
+            for(var item in this.routeMapDataView.markers) {
+                array.push(this.routeMapDataView.markers[item]);
+            } 
+            
+			markerSelection = markerElements.data(array);
+            
+            return markerSelection;
         }
 
         public clearMap(): void {
@@ -566,13 +591,18 @@ module powerbi.extensibility.visual {
                 thicknessValuesMin: any[],
                 thicknessValuesMax: any[];           
                 
-            let tooltipColumns: DataViewValueColumn[] = [];
+            let routeTooltipColumns: DataViewValueColumn[] = [];
+            let originTooltipColumns: DataViewValueColumn[] = [];
             
             for(var i in dataView.categorical.values) {
                 let column = dataView.categorical.values[i];
-                if(column.source && column.source.roles["tooltips"]) {
-                    tooltipColumns.push(column);
+                if(column.source && column.source.roles["routeTooltips"]) {
+                    routeTooltipColumns.push(column);
                 } 
+                
+                if(column.source && column.source.roles["originTooltips"]) {
+                    originTooltipColumns.push(column);
+                }
                 
                 if(column.source && column.source.roles["stateValue"]) {
                     stateValues = column.values;
@@ -616,15 +646,9 @@ module powerbi.extensibility.visual {
             }    
 
             markets.forEach((item: any, index: number) => {           
-                let tooltipInfo: VisualTooltipDataItem[] = [];
-                tooltipColumns.forEach((column) => {                    
-                    let format = ValueFormatter.getFormatStringByColumn(column.source, true),
-                    name = column.source.displayName,
-                    value = column.values[index] ? column.values[index] : "";                                   
-                    
-                    tooltipInfo.push({displayName: name, value: ValueFormatter.format(value, format)});
-                });                         
-                
+                let routeTooltipInfo: VisualTooltipDataItem[] = Visual.GetTooltipInfo(routeTooltipColumns, index);
+                let originTooltipInfo: VisualTooltipDataItem[] = Visual.GetTooltipInfo(originTooltipColumns, index);
+                           
                 let fromToLatLng = this.getActualFromToLatLng(latsFrom[index], longsFrom[index], latsTo[index], longsTo[index]);
                      
                 if(fromToLatLng !== null) {
@@ -644,12 +668,26 @@ module powerbi.extensibility.visual {
                         thicknessValue: thicknessValues ? thicknessValues[index] : null,
                         thicknessMax: thicknessValuesMax ? thicknessValuesMax[index] : null,
                         thicknessMin: thicknessValuesMin ? thicknessValuesMin[index] : null,
-                        tooltipInfo: tooltipInfo
+                        routeTooltipInfo: routeTooltipInfo,
+                        originTooltipInfo: originTooltipInfo,
+                        destinationTooltipInfo: null
                     });
                 }                              
             });                      
             
             return directions;
+        }
+        
+        private static GetTooltipInfo(columns: DataViewValueColumn[], valueIndex: number): VisualTooltipDataItem[] {
+            let routeTooltipInfo: VisualTooltipDataItem[] = [];
+            columns.forEach((column) => {
+                let format = ValueFormatter.getFormatStringByColumn(column.source, true),
+                    name = column.source.displayName,
+                    value = column.values[valueIndex] ? column.values[valueIndex] : "";
+
+                routeTooltipInfo.push({ displayName: name, value: ValueFormatter.format(value, format) });
+            });
+            return routeTooltipInfo;
         }
         
         private getThicknessOptions(direction: Direction): ThicknessOptions {
@@ -744,7 +782,7 @@ module powerbi.extensibility.visual {
             return {
                 arc: arc,
                 markers: [],
-                tooltipInfo: direction.tooltipInfo,
+                tooltipInfo: direction.routeTooltipInfo,
                 isSelected: false,
                 selectionId: selectionId
             };
@@ -759,6 +797,8 @@ module powerbi.extensibility.visual {
 
             let lat = isDestinationPoint ? direction.fromToLatLng.toLatLng.lat : direction.fromToLatLng.fromLatLng.lat;
             let long = isDestinationPoint ? direction.fromToLatLng.toLatLng.lng : direction.fromToLatLng.fromLatLng.lng;
+            
+            let tooltipInfo = isDestinationPoint ? direction.destinationTooltipInfo : direction.originTooltipInfo;
 
             this.setOnMarkerClickEvent(marker);
 
@@ -766,7 +806,8 @@ module powerbi.extensibility.visual {
                 marker: marker,
                 arcs: [], 
                 location: direction.locationFrom,
-                isSelected: false
+                isSelected: false,
+                tooltipInfo: tooltipInfo
             };
         }
 
@@ -832,7 +873,7 @@ module powerbi.extensibility.visual {
                 || !dataView.categorical.values[1]
                 || !dataView.categorical.values[2]
                 || !dataView.categorical.values[3]
-                || dataView.categorical.values[3].source.roles["tooltips"]) {
+                || dataView.categorical.values[3].source.roles["routeTooltips"]) {
 
                 return {
                     arcs: {},
@@ -884,11 +925,14 @@ module powerbi.extensibility.visual {
                     routeMapMarkerFrom = this.createRouteMapMarker(direction, false, fromLatLng, settings);
 
                     createdMarkers360[keyFrom] = routeMapMarkerFrom;
-                } else if(createdMarkers[keyFrom] && !isFromLngMinus360) {
-                    routeMapMarkerFrom = createdMarkers[keyFrom];
-                } else if(createdMarkers360[keyFrom] && isFromLngMinus360) {
-                    routeMapMarkerFrom = createdMarkers360[keyFrom];
-                }                
+                } else { 
+                    if (createdMarkers[keyFrom] && !isFromLngMinus360) {
+                        routeMapMarkerFrom = createdMarkers[keyFrom];
+                    } else if (createdMarkers360[keyFrom] && isFromLngMinus360) {
+                        routeMapMarkerFrom = createdMarkers360[keyFrom];
+                    } 
+                    Visual.replaceEmptyTooltip(routeMapMarkerFrom, direction, false);
+                }               
 
                 if (!createdMarkers[keyTo] && !isToLngMinus360) {
                     let toLatLng = direction.fromToLatLng.toLatLng; 
@@ -901,10 +945,13 @@ module powerbi.extensibility.visual {
                     routeMapMarkerTo = this.createRouteMapMarker(direction, true, toLatLng, settings);
                     createdMarkers360[keyTo] = routeMapMarkerTo;
                     
-                } else if(createdMarkers[keyTo] && !isToLngMinus360) {
-                    routeMapMarkerTo = createdMarkers[keyTo];
-                } else if(createdMarkers360[keyTo] && isToLngMinus360) {
-                    routeMapMarkerTo = createdMarkers360[keyTo];
+                } else { 
+                    if (createdMarkers[keyTo] && !isToLngMinus360) {
+                        routeMapMarkerTo = createdMarkers[keyTo];
+                    } else if (createdMarkers360[keyTo] && isToLngMinus360) {
+                        routeMapMarkerTo = createdMarkers360[keyTo];
+                    }
+                    Visual.replaceEmptyTooltip(routeMapMarkerTo, direction, true);
                 }  
 
                 if(!isFromLngMinus360) {
@@ -956,6 +1003,15 @@ module powerbi.extensibility.visual {
                 markersLayer: markersLayer,
                 arcsLayer: arcsLayer
             };
+        }
+        
+        // Replace existing empty tooltip with not null tooltip. This can be required when marker is both is origin and destination, and one tooltip is not provided
+        private static replaceEmptyTooltip(existingMarker: RouteMapMarker, direction: Direction, isDestinationPoint: boolean): void {
+            if (existingMarker.tooltipInfo) {
+                return;
+            }
+            
+            existingMarker.tooltipInfo = isDestinationPoint ? direction.destinationTooltipInfo : direction.originTooltipInfo;
         }
 
         private handleMove(): void {
