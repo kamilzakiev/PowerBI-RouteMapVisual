@@ -513,16 +513,20 @@ module powerbi.extensibility.visual {
         public render(): void {
             this.map.addLayer(this.routeMapDataView.arcsLayer);
             this.map.addLayer(this.routeMapDataView.markersLayer);
-            
-            this.setLabelFontColor(this.settings.markers.getLabelFontColor());  
-            
-            this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getArcsSelection(),(tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
+
+            this.setLabelFontColor(this.settings.markers.getLabelFontColor());
+
+            this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getArcsSelection(), (tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
                 return tooltipEvent.data.tooltipInfo;
-            }); 
-            
-            this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getMarkersSelection(),(tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
+            });
+
+            this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getMarkersSelection(), (tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
+                if (!tooltipEvent.data.tooltipInfo
+                    || !tooltipEvent.data.tooltipInfo.length) {
+                    return null;
+                }
                 return tooltipEvent.data.tooltipInfo;
-            });        
+            });
         }
         
         private getArcsSelection(): UpdateSelection<RouteMapArc> {
@@ -593,6 +597,7 @@ module powerbi.extensibility.visual {
                 
             let routeTooltipColumns: DataViewValueColumn[] = [];
             let originTooltipColumns: DataViewValueColumn[] = [];
+            let destinationTooltipColumns: DataViewValueColumn[] = [];
             
             for(var i in dataView.categorical.values) {
                 let column = dataView.categorical.values[i];
@@ -602,6 +607,10 @@ module powerbi.extensibility.visual {
                 
                 if(column.source && column.source.roles["originTooltips"]) {
                     originTooltipColumns.push(column);
+                }
+                
+                if(column.source && column.source.roles["destinationTooltips"]) {
+                    destinationTooltipColumns.push(column);
                 }
                 
                 if(column.source && column.source.roles["stateValue"]) {
@@ -648,6 +657,7 @@ module powerbi.extensibility.visual {
             markets.forEach((item: any, index: number) => {           
                 let routeTooltipInfo: VisualTooltipDataItem[] = Visual.GetTooltipInfo(routeTooltipColumns, index);
                 let originTooltipInfo: VisualTooltipDataItem[] = Visual.GetTooltipInfo(originTooltipColumns, index);
+                let destinationTooltipInfo: VisualTooltipDataItem[] = Visual.GetTooltipInfo(destinationTooltipColumns, index);
                            
                 let fromToLatLng = this.getActualFromToLatLng(latsFrom[index], longsFrom[index], latsTo[index], longsTo[index]);
                      
@@ -670,7 +680,7 @@ module powerbi.extensibility.visual {
                         thicknessMin: thicknessValuesMin ? thicknessValuesMin[index] : null,
                         routeTooltipInfo: routeTooltipInfo,
                         originTooltipInfo: originTooltipInfo,
-                        destinationTooltipInfo: null
+                        destinationTooltipInfo: destinationTooltipInfo
                     });
                 }                              
             });                      

@@ -136,6 +136,11 @@
             "displayName": "Origin Tooltips",
             "name": "originTooltips",
             "kind": "Measure"
+        },
+        {
+            "displayName": "Destination Tooltips",
+            "name": "destinationTooltips",
+            "kind": "Measure"
         }
     ],
     "dataViewMappings": [
@@ -215,7 +220,10 @@
                     },
                     "originTooltips": { 
                         "min": 0 
-                    }  
+                    },
+                    "destinationTooltips": { 
+                        "min": 0 
+                    }    
 				},
 				{
                     "market": {
@@ -273,6 +281,9 @@
                         "max": 0 
                     },
                     "originTooltips": { 
+                        "min": 0 
+                    },
+                    "destinationTooltips": { 
                         "min": 0 
                     } 
 				},
@@ -350,6 +361,9 @@
                     },
                     "originTooltips": { 
                         "min": 0 
+                    },
+                    "destinationTooltips": { 
+                        "min": 0 
                     } 
 				}
 			],
@@ -383,7 +397,8 @@
                             { "bind": { "to": "thicknessMin" } },
                             { "bind": { "to": "thicknessMax" } },
                             { "for": { "in": "routeTooltips" } },
-                            { "for": { "in": "originTooltips" } }
+                            { "for": { "in": "originTooltips" } },
+                            { "for": { "in": "destinationTooltips" } }
                         ]
                     }
                 }                
