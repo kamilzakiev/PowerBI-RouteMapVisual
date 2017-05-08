@@ -55,6 +55,10 @@ module powerbi.extensibility.visual {
     const labelSelector = ".route-map-label";
     const labelClassName = "route-map-label";
     const markerClass: string = "route-map-circleMarker";
+    const originDefMarkerState1Id: string = "originDefMarkerState1Id";
+    const originDefMarkerState2Id: string = "originDefMarkerState2Id";
+    const originDefMarkerState3Id: string = "originDefMarkerState3Id";
+    const originDefMarkerDefaultId: string = "originDefMarkerDefaultId";
     
     export class Visual implements IVisual {
         
@@ -168,7 +172,7 @@ module powerbi.extensibility.visual {
             var div = document.createElement('div');
             div.setAttribute("id", "map");
             div.setAttribute("style", "height:550px");
-            div.setAttribute("class", "none");
+            div.setAttribute("class", "mapVisual");
 
             this.targetHtmlElement.appendChild(div);
         }
@@ -191,8 +195,9 @@ module powerbi.extensibility.visual {
             };
 
             this.setMapHandlers();
+            
         }
-
+        
         public update(options: VisualUpdateOptions): void {
             // render new data if dataset was changed
             if (options.type == VisualUpdateType.Data || options.type == VisualUpdateType.All) {
@@ -309,7 +314,9 @@ module powerbi.extensibility.visual {
                         ? settings.routes.minThickness + (direction.thicknessValue - thicknessOptions.minValue) * thicknessOptions.coeficient 
                         : settings.routes.defaultThickness;
             
-            let line = L.polyline([pointFrom, pointTo], {color: color, weight: thickness} );
+            let line = L.polyline([pointFrom, pointTo], {color: color, weight: thickness} );            
+           
+            line.setStyle({className: "state1Arc" });
             
             return line;
         }
@@ -515,6 +522,8 @@ module powerbi.extensibility.visual {
             this.map.addLayer(this.routeMapDataView.markersLayer);
 
             this.setLabelFontColor(this.settings.markers.getLabelFontColor());
+            
+            this.setSvgDefinitions();
 
             this.tooltipServiceWrapper.addTooltip<TooltipEnabledDataPoint>(this.getArcsSelection(), (tooltipEvent: TooltipEventArgs<TooltipEnabledDataPoint>) => {
                 return tooltipEvent.data.tooltipInfo;
@@ -527,6 +536,31 @@ module powerbi.extensibility.visual {
                 }
                 return tooltipEvent.data.tooltipInfo;
             });
+        }
+        
+        private setSvgDefinitions(): void {
+            let svg: d3.Selection<any> = this.root.select("svg");
+            
+            if (!svg.length || !svg.select("defs").length || svg.select("defs")[0]) {
+            
+                var defs = svg.append("defs");
+                
+                var marker = defs.append("marker");
+                
+                marker.attr("markerWidth", "40")
+                    .attr("id", originDefMarkerState1Id)
+                    .attr("markerHeight", "13")
+                    .attr("refX", "2")
+                    .attr("refY", "6")
+                    .attr("orient", "auto"); 
+                    
+                var originDefMarker = marker.append("path")
+                    .attr("d", "M2,9 C21,6 21,6 40,6 C21,6 21,6 2,3 z")
+                    .attr("stroke-opacity", "1")
+                    .attr("stroke-width", "1")
+                    .attr("stroke-linecap", "round")
+                    .attr("stroke-linejoin", "round");
+            }                
         }
         
         private getArcsSelection(): UpdateSelection<RouteMapArc> {

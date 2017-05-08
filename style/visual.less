@@ -1,3 +1,18 @@
 @import (less) "node_modules/leaflet/dist/leaflet.css";
 @import (less) "external/route-map.css";
 @import (less) "node_modules/powerbi-visuals-utils-formattingutils/lib/index.css";
+
+.mapVisual {
+    .state1Arc {
+        marker-start: url(#originDefMarkerState1Id)
+    }
+    .state2Arc {
+        marker-start: url(#originDefMarkerState2Id)
+    }
+    .state3Arc {
+        marker-start: url(#originDefMarkerState3Id)
+    }
+    .stateDefaultArc {
+        marker-start: url(#originDefMarkerDefaultId)
+    }
+}
